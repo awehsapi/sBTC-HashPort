@@ -6,6 +6,9 @@ telemetry = true
 requirements = []
 cache_dir = "/home/runner/workspace/sBTC-HashPort/./.requirements"
 boot_contracts = ["pox", "costs-v2", "bns"]
+[contracts.ft-trait]
+path = "contracts/ft-trait.clar"
+
 [contracts.sBTC-HashPort]
 path = "contracts/sBTC-HashPort.clar"
 
