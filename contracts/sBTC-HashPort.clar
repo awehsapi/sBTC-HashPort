@@ -191,3 +191,92 @@
       )
     )
   ))
+
+
+
+(define-public (register-swap-participant
+    (atomic-swap-identifier (buff 32)))
+  (let
+    (
+      (swap-details (unwrap! (get-atomic-swap-details atomic-swap-identifier) ERROR-SWAP-NOT-FOUND))
+      (transaction-sender tx-sender)
+    )
+    ;; Validate swap state
+    (asserts! (is-eq (get swap-current-status swap-details) "active") ERROR-SWAP-ALREADY-FINALIZED)
+    (asserts! (is-none (get swap-participant swap-details)) ERROR-SWAP-ALREADY-FINALIZED)
+
+    ;; Update participant
+    (map-set atomic-swaps
+      { atomic-swap-identifier: atomic-swap-identifier }
+      (merge swap-details { 
+        swap-participant: (some transaction-sender),
+        swap-current-status: "participated"
+      })
+    )
+
+    (ok true)
+  ))
+
+(define-public (redeem-atomic-swap
+    (atomic-swap-identifier (buff 32))
+    (hash-preimage (buff 32))
+    (token-contract <ft-trait>))
+  (let
+    (
+      (swap-details (unwrap! (get-atomic-swap-details atomic-swap-identifier) ERROR-SWAP-NOT-FOUND))
+      (participant (unwrap! (get swap-participant swap-details) ERROR-UNAUTHORIZED-ACCESS))
+      (validated-token-principal (try! (validate-token-contract token-contract)))
+      (current-block-height stacks-block-height)
+    )
+    ;; Validate swap state
+    (asserts! (is-eq (get swap-current-status swap-details) "participated") ERROR-SWAP-ALREADY-FINALIZED)
+    (asserts! (< current-block-height (get swap-expiration-height swap-details)) ERROR-SWAP-EXPIRED)
+    (asserts! (verify-hash-preimage hash-preimage (get atomic-hash-lock swap-details)) ERROR-UNAUTHORIZED-ACCESS)
+    (asserts! (is-eq validated-token-principal (get token-contract-principal swap-details)) ERROR-INVALID-CONTRACT)
+
+    ;; Transfer tokens to participant
+    (try! (as-contract (contract-call? token-contract transfer
+        (get token-amount swap-details)
+        tx-sender
+        participant
+        none)))
+
+    ;; Update swap status
+    (map-set atomic-swaps
+      { atomic-swap-identifier: atomic-swap-identifier }
+      (merge swap-details { swap-current-status: "redeemed" })
+    )
+
+    (ok true)
+  ))
+
+(define-public (process-swap-refund
+    (atomic-swap-identifier (buff 32))
+    (token-contract <ft-trait>))
+  (let
+    (
+      (swap-details (unwrap! (get-atomic-swap-details atomic-swap-identifier) ERROR-SWAP-NOT-FOUND))
+      (validated-token-principal (try! (validate-token-contract token-contract)))
+      (current-block-height stacks-block-height)
+    )
+    ;; Validate swap state
+    (asserts! (is-eq (get swap-current-status swap-details) "active") ERROR-SWAP-ALREADY-FINALIZED)
+    (asserts! (>= current-block-height (get swap-expiration-height swap-details)) ERROR-UNAUTHORIZED-ACCESS)
+    (asserts! (is-eq tx-sender (get swap-initiator swap-details)) ERROR-UNAUTHORIZED-ACCESS)
+    (asserts! (is-eq validated-token-principal (get token-contract-principal swap-details)) ERROR-INVALID-CONTRACT)
+
+    ;; Transfer tokens back to initiator
+    (try! (as-contract (contract-call? token-contract transfer
+        (get token-amount swap-details)
+        tx-sender
+        (get swap-initiator swap-details)
+        none)))
+
+    ;; Update swap status
+    (map-set atomic-swaps
+      { atomic-swap-identifier: atomic-swap-identifier }
+      (merge swap-details { swap-current-status: "refunded" })
+    )
+
+    (ok true)
+  ))
